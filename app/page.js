@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 export default function Home() {
   const [count, setCount] = useState(null);
   const [now, setNow] = useState(null);
+  const [dbReady, setDbReady] = useState(false);
 
   useEffect(() => {
     setNow(new Date());
@@ -13,24 +14,48 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
-    fetch("/api/counter")
-      .then((res) => res.json())
-      .then((data) => setCount(data.count));
+    let unsub;
+    let cancelled = false;
+    (async () => {
+      const claude = window.claude;
+      if (!claude) return;
+      const db = await claude.use("db");
+      if (!db || cancelled) return;
+      setDbReady(true);
+      const ref = db.doc("counter/main");
+      unsub = ref.onSnapshot((snap) => {
+        const data = snap.data();
+        setCount(data && typeof data.value === "number" ? data.value : 0);
+      });
+    })();
+    return () => {
+      cancelled = true;
+      if (unsub) unsub();
+    };
   }, []);
 
   async function handleIncrement() {
-    const res = await fetch("/api/counter", { method: "POST" });
-    const data = await res.json();
-    setCount(data.count);
+    const claude = window.claude;
+    if (!claude) return;
+    const db = await claude.use("db");
+    if (!db) return;
+    const ref = db.doc("counter/main");
+    const snap = await ref.get();
+    const data = snap.data();
+    const current = snap.exists && typeof data.value === "number" ? data.value : 0;
+    await ref.set({ value: current + 1 });
   }
 
   return (
     <div>
       <h1>Hello, World!</h1>
-      <p>Heure serveur/client actuelle : {now ? now.toLocaleTimeString() : "..."}</p>
+      <p>Heure actuelle : {now ? now.toLocaleTimeString() : "..."}</p>
       <p>
-        Compteur (persisté en SQLite) : {count === null ? "..." : count}{" "}
-        <button onClick={handleIncrement}>+1</button>
+        Compteur (persisté via la base de l&apos;Artifact) :{" "}
+        {count === null ? (dbReady ? "..." : "indisponible ici") : count}{" "}
+        <button onClick={handleIncrement} disabled={!dbReady}>
+          +1
+        </button>
       </p>
     </div>
   );
